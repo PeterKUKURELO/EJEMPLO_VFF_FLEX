@@ -1413,7 +1413,9 @@
       const seed = Date.now();
       this.operationSequence = seed === this.lastOperationSeed ? this.operationSequence + 1 : 0;
       this.lastOperationSeed = seed;
-      return `${seed}${String(this.operationSequence).padStart(3, "0")}`;
+      const base = String(seed % 100000000).padStart(8, "0");
+      const sequence = String(this.operationSequence % 1000).padStart(3, "0");
+      return `${base}${sequence}`;
     }
 
     buildPayload(monto, currencyCode = "604") {

@@ -393,7 +393,7 @@ http://localhost:8080
   "action": "authorize",
   "channel": "ecommerce",
   "merchant_code": "tu-merchant-code",
-  "merchant_operation_number": "1742899999123000",
+  "merchant_operation_number": "12345678901",
   "payment_method": {},
   "payment_details": {
     "amount": "100",
