@@ -705,6 +705,8 @@
       this.flexScriptUrl = "";
       this.lastOperationSeed = 0;
       this.operationSequence = 0;
+      this.loadSequence = 0;
+      this.activeLoadId = 0;
 
       const savedEnvironment = this.readStoredEnvironment();
       const preferredEnvironment = savedEnvironment || this.config.environment || "tst";
@@ -1476,6 +1478,52 @@
       [...this.controllers.keys()].forEach((targetId) => this.disposeController(targetId));
     }
 
+    beginLoad() {
+      this.loadSequence += 1;
+      this.activeLoadId = this.loadSequence;
+      return this.activeLoadId;
+    }
+
+    isActiveLoad(loadId) {
+      return this.activeLoadId === loadId;
+    }
+
+    clearTargetDom(targetId) {
+      const target = document.getElementById(targetId);
+      if (target) {
+        target.classList.remove("response-mode");
+        target.innerHTML = "";
+        target.style.display = "none";
+      }
+
+      const loadingEl = targetId === "demo" ? document.getElementById("loading") : document.getElementById("loadingModal");
+      if (loadingEl) {
+        loadingEl.classList.add("welcome");
+        loadingEl.style.display = "none";
+      }
+
+      const legacy = targetId === "demo" ? document.getElementById("trxResponse") : document.getElementById("trxResponseModal");
+      if (legacy) {
+        legacy.style.display = "none";
+        legacy.textContent = "";
+      }
+
+      this.noticeService.clearForTarget(targetId);
+    }
+
+    resetInactiveTargets(activeTargetId) {
+      ["demo", "demoModal"].forEach((targetId) => {
+        if (targetId === activeTargetId) return;
+        this.disposeController(targetId);
+        this.clearTargetDom(targetId);
+      });
+
+      if (activeTargetId !== "demoModal") {
+        const modal = document.getElementById("paymentModal");
+        if (modal) modal.style.display = "none";
+      }
+    }
+
     resetTargetState(target, loadingEl) {
       this.disposeController(target.id);
       this.clearRuntimeOrderState();
@@ -1507,16 +1555,22 @@
     }
 
     async load(target, loadingEl, monto, currencyCode = "604") {
+      const loadId = this.beginLoad();
       this.disposeAllControllers();
+      this.resetInactiveTargets(target.id);
       this.resetTargetState(target, loadingEl);
       const methods = this.getMethods();
       let controller = null;
 
       try {
         await this.ensureFlexAssets();
+        if (!this.isActiveLoad(loadId)) return;
         const token = await this.authService.getAccessToken(this.config.apiAudience || this.config.apiDevBaseUrl || "https://api.dev.alignet.io");
+        if (!this.isActiveLoad(loadId)) return;
         const nonce = await this.authService.getNonce(token);
+        if (!this.isActiveLoad(loadId)) return;
         const payload = this.buildPayload(monto, currencyCode);
+        if (!this.isActiveLoad(loadId)) return;
 
         controller = new QrCancellationController({
           target,
@@ -1553,6 +1607,15 @@
 
         let finalized = false;
         const finalize = (kind, data) => {
+          if (!this.isActiveLoad(loadId)) {
+            console.log("[FINALIZE] carga obsoleta ignorada", kind, target.id, data);
+            try {
+              if (pf.terminate) pf.terminate();
+            } catch (e) {
+              console.warn("[FINALIZE] terminate obsoleta", e);
+            }
+            return;
+          }
           if (finalized) {
             console.log("[FINALIZE] duplicado ignorado", kind, target.id, data);
             return;
@@ -1603,12 +1666,20 @@
           this.logger.state("onError:after-finalize");
         };
 
+        if (!this.isActiveLoad(loadId)) {
+          if (controller) controller.dispose();
+          try {
+            if (pf.terminate) pf.terminate();
+          } catch (_e) {}
+          return;
+        }
         pf.init(target, onSuccess, onCancel, onError);
         loadingEl.style.display = "none";
         target.style.display = "block";
         this.logger.state("cargarFormulario:after-init");
       } catch (e) {
         if (controller) controller.dispose();
+        if (!this.isActiveLoad(loadId)) return;
         console.error(e);
         alert("Error al cargar formulario.");
         loadingEl.style.display = "none";
