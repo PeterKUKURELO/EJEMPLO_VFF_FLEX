@@ -1,11 +1,201 @@
-# Demo de Integración Checkout Flex
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, "..");
+
+const read = (relativePath) => fs.readFileSync(path.join(rootDir, relativePath), "utf8");
+
+const indexHtml = read("index.html");
+const appJs = read("vff_oop.js");
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function evaluateNumericExpression(expression) {
+  const raw = String(expression || "").trim();
+  if (!raw || !/^[\d\s*()+\-/.]+$/.test(raw)) return null;
+  try {
+    const value = Function(`"use strict"; return (${raw});`)();
+    return Number.isFinite(value) ? value : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function extractFlowNames(html) {
+  return unique([...html.matchAll(/<span class="pay-name">([^<]+)<\/span>/g)].map((match) => match[1].trim()));
+}
+
+function extractPaymentMethods(html) {
+  return unique(
+    [...html.matchAll(/<label class="ops-check"><input[^>]*name="pm"[^>]*value="([^"]+)"[^>]*><span>([^<]+)<\/span><\/label>/g)].map(
+      (match) => `${match[2].trim()} \`${match[1].trim()}\``
+    )
+  );
+}
+
+function extractCurrencies(html) {
+  const selectMatch = html.match(/<select id="paymentCurrency"[\s\S]*?<\/select>/);
+  if (!selectMatch) return [];
+  return unique(
+    [...selectMatch[0].matchAll(/<option value="([^"]+)"[^>]*>([^<]+)<\/option>/g)].map((match) => `${match[2].trim()} \`${match[1].trim()}\``)
+  );
+}
+
+function extractDefaultAmount(html) {
+  return html.match(/<input id="paymentAmount"[^>]*value="([^"]+)"/)?.[1] || "100";
+}
+
+function extractClasses(js) {
+  return unique([...js.matchAll(/class\s+(\w+)\s*\{/g)].map((match) => match[1]));
+}
+
+function extractWindowFunctions(js) {
+  return unique(
+    [...js.matchAll(/window\.(\w+)\s*=(?!=)/g)]
+      .map((match) => match[1])
+      .filter((name) => !name.startsWith("__"))
+      .map((name) => `\`${name}()\``)
+  );
+}
+
+function extractQrExpiration(js) {
+  const expression = js.match(/qrExpirationMs:\s*([^,\n]+)/)?.[1];
+  const value = evaluateNumericExpression(expression);
+  if (!value) return "No detectado";
+  const minutes = value / 60000;
+  if (Number.isInteger(minutes)) return `${minutes} minuto(s)`;
+  return `${minutes.toFixed(2)} minuto(s)`;
+}
+
+function extractEnvironmentData(js) {
+  const labelIndex = js.indexOf("environments:");
+  if (labelIndex === -1) return [];
+
+  const objectStart = js.indexOf("{", labelIndex);
+  if (objectStart === -1) return [];
+
+  let depth = 0;
+  let objectEnd = -1;
+  for (let i = objectStart; i < js.length; i += 1) {
+    if (js[i] === "{") depth += 1;
+    if (js[i] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        objectEnd = i;
+        break;
+      }
+    }
+  }
+  if (objectEnd === -1) return [];
+
+  const block = js.slice(objectStart + 1, objectEnd);
+  const environments = [];
+  let i = 0;
+
+  while (i < block.length) {
+    while (i < block.length && /\s|,/.test(block[i])) i += 1;
+    const keyMatch = block.slice(i).match(/^([a-zA-Z_]\w*)\s*:\s*\{/);
+    if (!keyMatch) {
+      i += 1;
+      continue;
+    }
+
+    const key = keyMatch[1];
+    const braceStart = i + keyMatch[0].lastIndexOf("{");
+    let localDepth = 0;
+    let braceEnd = -1;
+
+    for (let j = braceStart; j < block.length; j += 1) {
+      if (block[j] === "{") localDepth += 1;
+      if (block[j] === "}") {
+        localDepth -= 1;
+        if (localDepth === 0) {
+          braceEnd = j;
+          break;
+        }
+      }
+    }
+
+    if (braceEnd === -1) break;
+
+    const envContent = block.slice(braceStart + 1, braceEnd);
+    environments.push({
+      key,
+      authBaseUrl: envContent.match(/authBaseUrl:\s*"([^"]+)"/)?.[1] || "",
+      apiDevBaseUrl: envContent.match(/apiDevBaseUrl:\s*"([^"]+)"/)?.[1] || "",
+      cancelApiBaseUrl: envContent.match(/cancelApiBaseUrl:\s*"([^"]+)"/)?.[1] || ""
+    });
+
+    i = braceEnd + 1;
+  }
+
+  return environments.filter((env) => env.authBaseUrl && env.apiDevBaseUrl && env.cancelApiBaseUrl);
+}
+
+function listProjectFiles(dir, depth = 0, maxDepth = 2) {
+  if (depth > maxDepth) return [];
+  const entries = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => !entry.name.startsWith(".git"))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const lines = [];
+  for (const entry of entries) {
+    const indent = "  ".repeat(depth);
+    lines.push(`${indent}${entry.name}${entry.isDirectory() ? "/" : ""}`);
+    if (entry.isDirectory()) {
+      lines.push(...listProjectFiles(path.join(dir, entry.name), depth + 1, maxDepth));
+    }
+  }
+  return lines;
+}
+
+const flowNames = extractFlowNames(indexHtml);
+const paymentMethods = extractPaymentMethods(indexHtml);
+const currencies = extractCurrencies(indexHtml);
+const defaultAmount = extractDefaultAmount(indexHtml);
+const classNames = extractClasses(appJs);
+const windowFunctions = extractWindowFunctions(appJs);
+const qrExpiration = extractQrExpiration(appJs);
+const environments = extractEnvironmentData(appJs);
+const treeLines = listProjectFiles(rootDir, 0, 2).filter((line) => !line.includes("README.md"));
+
+const architectureDescriptions = {
+  Utils: "Utilidades para formateo, serialización segura y helpers de soporte.",
+  Logger: "Herramientas de trazabilidad y debug del estado visual.",
+  NoticeService: "Manejo de mensajes de expiración y cancelación del flujo QR.",
+  AuthService: "Obtención de access token y nonce antes de abrir el checkout.",
+  ApiService: "Consulta de charge y ejecución de cancelación QR.",
+  ResponseRenderer: "Render de payload, respuesta y consulta API dentro del demo.",
+  QrCancellationController: "Control del ciclo de vida del QR: selección, expiración y cancelación.",
+  CheckoutApp: "Orquestador principal del checkout, configuración, carga de assets y reinicio de estado."
+};
+
+const architectureList = classNames
+  .filter((name) => architectureDescriptions[name])
+  .map((name) => `- \`${name}\`: ${architectureDescriptions[name]}`)
+  .join("\n");
+
+const environmentTableRows = environments
+  .map(
+    (env) =>
+      `| \`${env.key}\` | \`${env.authBaseUrl}\` | \`${env.apiDevBaseUrl}\` | \`${env.cancelApiBaseUrl}\` |`
+  )
+  .join("\n");
+
+const readme = `# Demo de Integración Checkout Flex
 
 > Documento generado automáticamente desde la configuración actual del proyecto.
 > Si cambias flujos, métodos, ambientes o utilidades globales, ejecuta:
 >
-> ```bash
+> \`\`\`bash
 > node scripts/generate-readme.mjs
-> ```
+> \`\`\`
 
 ## Resumen Ejecutivo
 
@@ -38,36 +228,28 @@ Este demo resuelve ese problema ofreciendo un entorno liviano y reutilizable par
 
 ## Información Dinámica del Proyecto
 
-Esta sección se genera desde `index.html` y `vff_oop.js`.
+Esta sección se genera desde \`index.html\` y \`vff_oop.js\`.
 
-- Flujos detectados: 3
-- Monto por defecto: `100`
-- Monedas habilitadas: Soles (PEN) `PEN`, Dolares (USD) `USD`
-- Métodos detectados: 6
-- Expiración actual del QR: 1 minuto(s)
-- Funciones globales expuestas: `abrirFormularioNormal()`, `abrirModal()`, `abrirFormularioExpandido()`, `cerrarModal()`, `volverAlInicio()`, `forceQrCancellationNow()`, `printQrExpiration()`, `printQrCancellation()`, `vffDebugState()`
+- Flujos detectados: ${flowNames.length}
+- Monto por defecto: \`${defaultAmount}\`
+- Monedas habilitadas: ${currencies.join(", ")}
+- Métodos detectados: ${paymentMethods.length}
+- Expiración actual del QR: ${qrExpiration}
+- Funciones globales expuestas: ${windowFunctions.join(", ")}
 
 ### Flujos Disponibles
 
-- Formulario normal
-- Pop up
-- Formulario expandido
+${flowNames.map((name) => `- ${name}`).join("\n")}
 
 ### Métodos de Pago Habilitables
 
-- Tarjeta `CARD`
-- Yape `YAPE`
-- QR `QR`
-- Pago Efectivo `PAGOEFECTIVO`
-- Cuotealo `CUOTEALO`
-- Cuotealo `BANK_TRANSFER`
+${paymentMethods.map((method) => `- ${method}`).join("\n")}
 
 ### Ambientes Configurados
 
 | Ambiente | Auth Base URL | API Base URL | Cancel API Base URL |
 | --- | --- | --- | --- |
-| `tst` | `https://auth.preprod.alignet.io` | `https://api.dev.alignet.io` | `https://api.preprod.alignet.io` |
-| `prod` | `https://auth.alignet.io` | `https://api.alignet.io` | `https://api.alignet.io` |
+${environmentTableRows}
 
 ## Qué Hace Este Proyecto
 
@@ -84,18 +266,11 @@ Esta sección se genera desde `index.html` y `vff_oop.js`.
 
 La lógica principal vive en [vff_oop.js](/Users/macbookprotouch/Documents/ALIGNET/example-flex-vff/EJEMPLO_VFF_FLEX/vff_oop.js) y está organizada por responsabilidades:
 
-- `Utils`: Utilidades para formateo, serialización segura y helpers de soporte.
-- `Logger`: Herramientas de trazabilidad y debug del estado visual.
-- `NoticeService`: Manejo de mensajes de expiración y cancelación del flujo QR.
-- `AuthService`: Obtención de access token y nonce antes de abrir el checkout.
-- `ApiService`: Consulta de charge y ejecución de cancelación QR.
-- `ResponseRenderer`: Render de payload, respuesta y consulta API dentro del demo.
-- `QrCancellationController`: Control del ciclo de vida del QR: selección, expiración y cancelación.
-- `CheckoutApp`: Orquestador principal del checkout, configuración, carga de assets y reinicio de estado.
+${architectureList}
 
 ## Flujo del Sistema
 
-```mermaid
+\`\`\`mermaid
 flowchart TD
     A[Usuario configura checkout] --> B[CheckoutApp carga assets y ambiente]
     B --> C[AuthService obtiene access token]
@@ -107,7 +282,7 @@ flowchart TD
     H --> I[ApiService consulta el charge]
     G --> J[QrCancellationController monitorea expiración del QR]
     J --> K[ApiService ejecuta cancelación si aplica]
-```
+\`\`\`
 
 ### Entrada -> Proceso -> Salida
 
@@ -139,12 +314,12 @@ flowchart TD
 Aunque este repositorio es un demo, incorpora varios criterios que sí importan en un entorno real:
 
 - Separación clara por servicios y orquestación.
-- Cambio de ambiente entre `tst` y `prod`.
+- Cambio de ambiente entre \`tst\` y \`prod\`.
 - Trazabilidad mediante utilidades de debug.
 - Control explícito de token y nonce.
 - Consulta y cancelación vía capa de API dedicada.
 - Reinicio limpio del flujo para evitar arrastre de estado.
-- Generación de `merchant_operation_number` nuevo por solicitud.
+- Generación de \`merchant_operation_number\` nuevo por solicitud.
 
 ## Limitaciones Actuales
 
@@ -160,14 +335,9 @@ Si se llevara a un entorno real, lo siguiente debería pasar a backend:
 
 ## Estructura del Proyecto
 
-```txt
-.nojekyll
-index.html
-Pay-Me.png
-scripts/
-  generate-readme.mjs
-vff_oop.js
-```
+\`\`\`txt
+${treeLines.join("\n")}
+\`\`\`
 
 Archivos principales:
 
@@ -196,16 +366,16 @@ Abrir directamente [index.html](/Users/macbookprotouch/Documents/ALIGNET/example
 
 Levantar un servidor estático simple:
 
-```bash
+\`\`\`bash
 cd /Users/macbookprotouch/Documents/ALIGNET/example-flex-vff/EJEMPLO_VFF_FLEX
 python3 -m http.server 8080
-```
+\`\`\`
 
 Luego abrir:
 
-```txt
+\`\`\`txt
 http://localhost:8080
-```
+\`\`\`
 
 ## Cómo Usarlo
 
@@ -218,7 +388,7 @@ http://localhost:8080
 
 ## Ejemplo de Payload
 
-```json
+\`\`\`json
 {
   "action": "authorize",
   "channel": "ecommerce",
@@ -235,21 +405,13 @@ http://localhost:8080
     }
   }
 }
-```
+\`\`\`
 
 ## Utilidades para Demo y Debug
 
 Desde la consola del navegador:
 
-- `abrirFormularioNormal()`
-- `abrirModal()`
-- `abrirFormularioExpandido()`
-- `cerrarModal()`
-- `volverAlInicio()`
-- `forceQrCancellationNow()`
-- `printQrExpiration()`
-- `printQrCancellation()`
-- `vffDebugState()`
+${windowFunctions.map((fn) => `- ${fn}`).join("\n")}
 
 ## Valor para Portafolio
 
@@ -269,3 +431,7 @@ Eso lo hace especialmente útil para roles orientados a ecommerce, fintech, inte
 - Incorporar pruebas automáticas para payload y reset de estado.
 - Mejorar el feedback visual de errores API.
 - Agregar pipeline de despliegue para demo pública.
+`;
+
+fs.writeFileSync(path.join(rootDir, "README.md"), readme);
+console.log("README.md generado correctamente.");
