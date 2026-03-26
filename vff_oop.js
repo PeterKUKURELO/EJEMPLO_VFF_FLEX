@@ -320,11 +320,12 @@
   }
 
   class ResponseRenderer {
-    constructor({ apiService, payload, logger }) {
+    constructor({ apiService, payload, logger, onForceCancellation }) {
       this.api = apiService;
       this.payload = payload;
       this.logger = logger;
       this.payloadStr = Utils.safeStringify(payload);
+      this.onForceCancellation = typeof onForceCancellation === "function" ? onForceCancellation : null;
     }
 
     render(container, resp) {
@@ -352,7 +353,8 @@
       const btnResp = this.createButton("Ver respuesta");
       const btnPayload = this.createButton("Ver payload");
       const btnConsulta = this.createButton("Consultar charge");
-      tools.append(btnResp, btnPayload, btnConsulta);
+      const btnCancelNow = this.createButton("Cancelar ahora", "trx-btn-cancel");
+      tools.append(btnResp, btnPayload, btnConsulta, btnCancelNow);
 
       const blockResp = this.createBlock("Response", respStr);
       const blockPayload = this.createBlock("Payload enviado", this.payloadStr);
@@ -404,14 +406,20 @@
         }
       });
 
+      btnCancelNow.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (this.onForceCancellation) this.onForceCancellation();
+      });
+
       openBlock("resp");
       this.logger.state("renderResponse:end");
     }
 
-    createButton(text) {
+    createButton(text, extraClass = "") {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "trx-btn";
+      btn.className = `trx-btn ${extraClass}`.trim();
       btn.textContent = text;
       return btn;
     }
@@ -443,7 +451,7 @@
   }
 
   class QrCancellationController {
-    constructor({ target, noticeService, apiService, initialAccessToken, merchantCode, orderId, expirationMs }) {
+    constructor({ target, noticeService, apiService, initialAccessToken, merchantCode, orderId, expirationMs, autoCancellationEnabled = true }) {
       this.target = target;
       this.noticeService = noticeService;
       this.apiService = apiService;
@@ -451,6 +459,8 @@
       this.merchantCode = merchantCode || CONFIG.creds.merchantCode;
       this.orderId = orderId || null;
       this.expirationMs = expirationMs;
+      this.autoCancellationEnabled = autoCancellationEnabled !== false;
+      this.extraTimeMs = 0;
 
       this.isDemoTarget = target.id === "demo" || target.id === "demoModal";
       this.cleaned = false;
@@ -468,6 +478,7 @@
     bind() {
       if (!this.target) return;
       this.target.addEventListener("click", this.onClick, true);
+      this.markQrSelected();
       this.initialSelectionTimeout = setTimeout(() => {
         if (this.target.querySelector(".payment-method-wrapper.payment_method_qr.selected")) {
           this.markQrSelected();
@@ -490,12 +501,13 @@
     }
 
     markQrSelected() {
+      if (this.qrSelectedAt) return;
       this.qrSelectedAt = new Date();
       this.pendingExpirationMessage = this.buildExpirationMessage();
       this.messageShown = false;
       window.__vffQrExpirationMessage = this.pendingExpirationMessage;
       window.__vffQrSelectedAt = this.qrSelectedAt.toISOString();
-      console.log("[VFF][QR][EXPIRACION]", this.pendingExpirationMessage);
+      console.log("[VFF][FLEX][EXPIRACION]", this.pendingExpirationMessage);
       this.noticeService.setExpiration(this.target.id, this.pendingExpirationMessage);
       this.hideExpirationField();
       setTimeout(() => this.hideExpirationField(), 200);
@@ -506,12 +518,12 @@
     buildExpirationMessage() {
       const expirationDate = this.getExpirationDate();
       if (!expirationDate) return "";
-      return `Este QR vence el ${Utils.formatDateTime(expirationDate)} (2 minutos desde su generacion).`;
+      return `Esta sesion FLEX vence el ${Utils.formatDateTime(expirationDate)} (2 minutos desde su inicio).`;
     }
 
     getExpirationDate() {
       if (!this.qrSelectedAt) return null;
-      return new Date(this.qrSelectedAt.getTime() + this.expirationMs);
+      return new Date(this.qrSelectedAt.getTime() + this.expirationMs + this.extraTimeMs);
     }
 
     hideExpirationField() {
@@ -538,7 +550,7 @@
     }
 
     setCancelState(state, { note = "", httpStatus = "", countdownText = "" } = {}) {
-      const lines = ["API de Cancelacion QR", `Estado: ${state}`];
+      const lines = ["API de Cancelacion FLEX", `Estado: ${state}`];
       if (countdownText) lines.push(`Contador: ${countdownText}`);
       if (note) lines.push("", `Nota: ${note}`);
       if (httpStatus) lines.push("", `HTTP: ${httpStatus}`);
@@ -560,6 +572,81 @@
       }
     }
 
+    setAutoCancellationEnabled(enabled) {
+      this.autoCancellationEnabled = !!enabled;
+      if (!this.qrSelectedAt) return;
+      if (!this.autoCancellationEnabled) {
+        const expirationDate = this.getExpirationDate();
+        this.clearCancelTimer();
+        this.clearCountdown();
+        this.setCancelState("DESACTIVADO", {
+          countdownText: expirationDate ? Utils.formatCountdown(expirationDate.getTime() - Date.now()) : "",
+          note: 'Cancelacion automatica FLEX desactivada. Usa "Cancelar ahora" para enviar DELETE manualmente.'
+        });
+        return;
+      }
+      this.scheduleCancellation();
+    }
+
+    adjustExtraTime(msDelta = 0) {
+      const delta = Number(msDelta);
+      if (!Number.isFinite(delta) || delta === 0) return;
+      if (!this.qrSelectedAt) this.markQrSelected();
+      this.extraTimeMs += delta;
+      if (this.extraTimeMs < -this.expirationMs) this.extraTimeMs = -this.expirationMs;
+      const expirationDate = this.getExpirationDate();
+      this.pendingExpirationMessage = this.buildExpirationMessage();
+      window.__vffQrExpirationMessage = this.pendingExpirationMessage;
+      const signedSeconds = Math.round(Math.abs(delta) / 1000);
+      const actionText = delta > 0 ? `+${signedSeconds}s` : `-${signedSeconds}s`;
+      this.setCancelState(this.autoCancellationEnabled ? "PROGRAMADO" : "DESACTIVADO", {
+        countdownText: expirationDate ? Utils.formatCountdown(expirationDate.getTime() - Date.now()) : "",
+        note: `Tiempo ajustado ${actionText}. Nueva expiracion: ${expirationDate ? Utils.formatDateTime(expirationDate) : "-"}.`
+      });
+      if (this.autoCancellationEnabled) this.scheduleCancellation();
+    }
+
+    addExtraTime(ms = 30000) {
+      this.adjustExtraTime(Math.abs(Number(ms) || 0));
+    }
+
+    reduceExtraTime(ms = 30000) {
+      this.adjustExtraTime(-Math.abs(Number(ms) || 0));
+    }
+
+    getCountdownInfo() {
+      const expirationDate = this.getExpirationDate();
+      if (!expirationDate) {
+        return {
+          hasTimer: false,
+          autoEnabled: this.autoCancellationEnabled,
+          msLeft: 0,
+          text: "Sin temporizador activo",
+          progressPct: 0
+        };
+      }
+      const msLeft = Math.max(0, expirationDate.getTime() - Date.now());
+      const totalMs = Math.max(1000, this.expirationMs + this.extraTimeMs);
+      const consumedMs = Math.max(0, totalMs - msLeft);
+      const progressPct = Math.max(0, Math.min(100, (consumedMs / totalMs) * 100));
+      if (!this.autoCancellationEnabled) {
+        return {
+          hasTimer: false,
+          autoEnabled: false,
+          msLeft,
+          text: "Temporizador desactivado",
+          progressPct: 0
+        };
+      }
+      return {
+        hasTimer: true,
+        autoEnabled: this.autoCancellationEnabled,
+        msLeft,
+        text: Utils.formatCountdown(msLeft),
+        progressPct
+      };
+    }
+
     startCountdown(expirationDate) {
       this.clearCountdown();
       const update = () => {
@@ -576,6 +663,7 @@
 
     async executeCancellation() {
       if (this.disposed || !this.qrSelectedAt) return;
+      this.clearCancelTimer();
       this.clearCountdown();
       if (!this.merchantCode || !this.orderId) {
         this.setCancelState("ERROR", { note: "No se pudo ejecutar DELETE porque falta merchant_code u order_id." });
@@ -632,6 +720,14 @@
       this.clearCancelTimer();
       this.clearCountdown();
 
+      if (!this.autoCancellationEnabled) {
+        this.setCancelState("DESACTIVADO", {
+          countdownText: Utils.formatCountdown(expirationDate.getTime() - Date.now()),
+          note: `Temporizador detenido. Vence: ${Utils.formatDateTime(expirationDate)}`
+        });
+        return;
+      }
+
       if (!this.merchantCode || !this.orderId) {
         this.setCancelState("PENDIENTE", {
           countdownText: Utils.formatCountdown(expirationDate.getTime() - Date.now()),
@@ -670,7 +766,7 @@
 
     forceNow() {
       if (!this.qrSelectedAt) {
-        console.log("[VFF][QR][CANCELACION][MANUAL] Primero selecciona QR.");
+        console.log("[VFF][FLEX][CANCELACION][MANUAL] No hay temporizador activo.");
         return;
       }
       this.executeCancellation();
@@ -711,6 +807,7 @@
       const savedEnvironment = this.readStoredEnvironment();
       const preferredEnvironment = savedEnvironment || this.config.environment || "tst";
       this.setEnvironment(preferredEnvironment, { persist: false });
+      this.autoQrCancellationEnabled = this.readStoredAutoQrCancellationEnabled();
     }
 
     readStoredEnvironment() {
@@ -724,6 +821,22 @@
     persistEnvironment(key) {
       try {
         localStorage.setItem("vffEnvironment", key);
+      } catch (_e) {}
+    }
+
+    readStoredAutoQrCancellationEnabled() {
+      try {
+        const raw = localStorage.getItem("vffAutoQrCancellationEnabled");
+        if (raw === null) return false;
+        return raw !== "0" && raw !== "false";
+      } catch (_e) {
+        return false;
+      }
+    }
+
+    persistAutoQrCancellationEnabled(isEnabled) {
+      try {
+        localStorage.setItem("vffAutoQrCancellationEnabled", isEnabled ? "1" : "0");
       } catch (_e) {}
     }
 
@@ -1217,6 +1330,129 @@
       });
     }
 
+    updateQrCancellationControlsUi() {
+      const toggle = document.getElementById("qrAutoCancelToggle");
+      const status = document.getElementById("qrAutoCancelStatus");
+      const addTimeBtn = document.getElementById("flexAddTimeBtn");
+      const minusTimeBtn = document.getElementById("flexMinusTimeBtn");
+      if (toggle) toggle.checked = !!this.autoQrCancellationEnabled;
+      if (status) {
+        status.textContent = this.autoQrCancellationEnabled ? "Activa" : "Desactivada";
+        status.classList.toggle("is-on", !!this.autoQrCancellationEnabled);
+        status.classList.toggle("is-off", !this.autoQrCancellationEnabled);
+      }
+      if (addTimeBtn) {
+        addTimeBtn.disabled = !this.autoQrCancellationEnabled;
+      }
+      if (minusTimeBtn) {
+        minusTimeBtn.disabled = !this.autoQrCancellationEnabled;
+      }
+      this.updateFlexCountdownUi();
+    }
+
+    updateFlexCountdownUi() {
+      const countdownEl = document.getElementById("flexCountdownStatus");
+      const addTimeBtn = document.getElementById("flexAddTimeBtn");
+      const minusTimeBtn = document.getElementById("flexMinusTimeBtn");
+      if (!countdownEl) return;
+
+      const controller = this.getActiveQrController();
+      const info = controller && typeof controller.getCountdownInfo === "function" ? controller.getCountdownInfo() : null;
+      const isActive = !!(info && info.hasTimer);
+      const isAutoActive = !!(isActive && info.autoEnabled);
+
+      if (!isActive) {
+        countdownEl.textContent = this.autoQrCancellationEnabled ? "Contador: Sin temporizador activo" : "Contador: Temporizador desactivado";
+        countdownEl.classList.add("is-idle");
+      } else {
+        countdownEl.textContent = `Contador: ${info.text}`;
+        countdownEl.classList.remove("is-idle");
+      }
+
+      if (addTimeBtn) {
+        addTimeBtn.disabled = !isAutoActive;
+      }
+      if (minusTimeBtn) {
+        minusTimeBtn.disabled = !isAutoActive;
+      }
+
+      this.updateFlexTimerWidget(controller, info, isActive);
+    }
+
+    updateFlexTimerWidget(controller, info, isActive) {
+      const widget = document.getElementById("flexTimerWidget");
+      const valueEl = document.getElementById("flexTimerValue");
+      const loaderEl = document.getElementById("flexTimerLoader");
+      const widgetModal = document.getElementById("flexTimerWidgetModal");
+      const valueElModal = document.getElementById("flexTimerValueModal");
+      const loaderElModal = document.getElementById("flexTimerLoaderModal");
+
+      const hideAll = () => {
+        if (widget) widget.hidden = true;
+        if (widgetModal) widgetModal.hidden = true;
+      };
+
+      if (!controller || !info || !isActive) {
+        hideAll();
+        return;
+      }
+
+      const isModalTarget = controller?.target?.id === "demoModal";
+      const activeWidget = isModalTarget ? widgetModal : widget;
+      const activeValueEl = isModalTarget ? valueElModal : valueEl;
+      const activeLoaderEl = isModalTarget ? loaderElModal : loaderEl;
+      const progress = Math.max(0, Math.min(100, Number(info.progressPct || 0)));
+
+      hideAll();
+      if (!activeWidget || !activeValueEl || !activeLoaderEl) return;
+      activeWidget.hidden = false;
+      activeValueEl.textContent = info.text || "00:00";
+      activeLoaderEl.style.setProperty("--timer-progress", `${progress}%`);
+    }
+
+    setAutoQrCancellationEnabled(isEnabled, { persist = true } = {}) {
+      this.autoQrCancellationEnabled = !!isEnabled;
+      if (persist) this.persistAutoQrCancellationEnabled(this.autoQrCancellationEnabled);
+      this.updateQrCancellationControlsUi();
+      const controller = this.getActiveQrController();
+      if (controller && typeof controller.setAutoCancellationEnabled === "function") {
+        controller.setAutoCancellationEnabled(this.autoQrCancellationEnabled);
+      }
+    }
+
+    bindQrCancellationControls() {
+      const toggle = document.getElementById("qrAutoCancelToggle");
+      const addTimeBtn = document.getElementById("flexAddTimeBtn");
+      const minusTimeBtn = document.getElementById("flexMinusTimeBtn");
+      if (!toggle || !addTimeBtn || !minusTimeBtn) return;
+      if (toggle.dataset.bound === "1") return;
+      toggle.dataset.bound = "1";
+
+      this.updateQrCancellationControlsUi();
+
+      toggle.addEventListener("change", () => {
+        this.setAutoQrCancellationEnabled(toggle.checked);
+      });
+
+      addTimeBtn.addEventListener("click", () => {
+        const controller = this.getActiveQrController();
+        if (!controller || typeof controller.addExtraTime !== "function") return;
+        controller.addExtraTime(30000);
+        this.updateFlexCountdownUi();
+      });
+
+      minusTimeBtn.addEventListener("click", () => {
+        const controller = this.getActiveQrController();
+        if (!controller || typeof controller.reduceExtraTime !== "function") return;
+        controller.reduceExtraTime(30000);
+        this.updateFlexCountdownUi();
+      });
+
+      if (!this._flexCountdownTicker) {
+        this._flexCountdownTicker = window.setInterval(() => this.updateFlexCountdownUi(), 1000);
+      }
+    }
+
     isMobileViewport() {
       try {
         return window.matchMedia("(max-width: 980px)").matches;
@@ -1403,6 +1639,14 @@
       return { iso: "PEN", numeric: "604" };
     }
 
+    detectDeviceOrigin() {
+      const ua = String(window?.navigator?.userAgent || "").toLowerCase();
+      const isMobileUa = /(android|iphone|ipod|blackberry|iemobile|opera mini|mobile)/.test(ua);
+      const hasTouch = Number(window?.navigator?.maxTouchPoints || 0) > 0;
+      const isSmallViewport = this.isMobileViewport();
+      return isMobileUa || (hasTouch && isSmallViewport) ? "celular" : "laptop";
+    }
+
     getCheckoutValues(monto, moneda) {
       const amountFromUi = document.getElementById("paymentAmount")?.value;
       const currencyFromUi = document.getElementById("paymentCurrency")?.value;
@@ -1444,8 +1688,11 @@
           amount: Math.round(monto).toString(),
           currency: currencyCode,
           billing: profile,
-          shipping: profile,
-          customer: profile
+          // shipping: profile,
+          // customer: profile,
+          additional_fields: {
+            device_origin: this.detectDeviceOrigin()
+          }
         }
       };
     }
@@ -1462,6 +1709,7 @@
       window.__vffQrMerchantCode = null;
       window.__vffQrOrderId = null;
       window.__vffActiveQrController = null;
+      this.updateFlexCountdownUi();
     }
 
     disposeController(targetId) {
@@ -1472,6 +1720,7 @@
       if (window.__vffActiveQrController === controller) {
         window.__vffActiveQrController = null;
       }
+      this.updateFlexCountdownUi();
     }
 
     disposeAllControllers() {
@@ -1552,6 +1801,7 @@
       if (prev) prev.dispose();
       this.controllers.set(targetId, controller);
       window.__vffActiveQrController = controller;
+      this.updateFlexCountdownUi();
     }
 
     async load(target, loadingEl, monto, currencyCode = "604") {
@@ -1601,7 +1851,8 @@
           initialAccessToken: token,
           merchantCode: payload.merchant_code,
           orderId: payload.merchant_operation_number,
-          expirationMs: this.config.qrExpirationMs
+          expirationMs: this.config.qrExpirationMs,
+          autoCancellationEnabled: this.autoQrCancellationEnabled
         });
         controller.bind();
         this.setController(target.id, controller);
@@ -1609,14 +1860,14 @@
         const renderer = new ResponseRenderer({
           apiService: this.apiService,
           payload,
-          logger: this.logger
+          logger: this.logger,
+          onForceCancellation: () => this.forceCancellation()
         });
 
         const pf = new FlexPaymentForms({
           nonce,
           payload,
           settings: {
-            
             display_result_screen: true,
             show_close_button: false
           },
@@ -1740,8 +1991,12 @@
       this.clearRuntimeOrderState();
     }
 
+    getActiveQrController() {
+      return window.__vffActiveQrController || this.getController("demo") || this.getController("demoModal");
+    }
+
     forceCancellation() {
-      const controller = window.__vffActiveQrController || this.getController("demo") || this.getController("demoModal");
+      const controller = this.getActiveQrController();
       if (!controller) {
         console.log("[VFF][QR][CANCELACION][MANUAL] No hay flujo activo.");
         return;
@@ -1752,6 +2007,7 @@
 
   const app = new CheckoutApp(CONFIG);
   app.bindSecureCredentialsPanel();
+  app.bindQrCancellationControls();
   app.bindMobileNavToggle();
   app.bindMobileOptionsToggle();
   app.bindMobileHeaderAutoHide();
@@ -1771,6 +2027,12 @@
   window.cerrarModal = () => app.closeModal();
   window.volverAlInicio = () => window.location.reload();
   window.forceQrCancellationNow = () => app.forceCancellation();
+  window.setQrAutoCancellation = (isEnabled) => {
+    const normalized = typeof isEnabled === "string" ? isEnabled.trim().toLowerCase() : isEnabled;
+    const nextEnabled = !(normalized === false || normalized === 0 || normalized === "0" || normalized === "false" || normalized === "off");
+    return app.setAutoQrCancellationEnabled(nextEnabled);
+  };
+  window.getQrAutoCancellation = () => app.autoQrCancellationEnabled;
   window.printQrExpiration = () => {
     if (window.__vffQrExpirationMessage) {
       console.log("[VFF][QR][EXPIRACION][MANUAL]", window.__vffQrExpirationMessage);

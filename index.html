@@ -664,6 +664,114 @@
   box-shadow:0 6px 14px rgba(10,58,154,.12);
 }
 
+.qr-cancel-controls{
+  margin-top:12px;
+  padding-top:12px;
+  border-top:1px dashed #D8E6FF;
+  display:grid;
+  gap:10px;
+}
+.qr-auto-toggle{
+  width:100%;
+}
+.qr-auto-toggle span{
+  width:100%;
+  justify-content:space-between;
+}
+.qr-cancel-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.qr-add-time-btn{
+  height:30px;
+  border-radius:999px;
+  border:1px solid #BFD6FF;
+  background:#EEF4FF;
+  color:#0A3A9A;
+  padding:0 10px;
+  font-size:11px;
+  font-weight:800;
+  cursor:pointer;
+}
+.qr-add-time-btn:hover{
+  background:#E3EEFF;
+}
+.qr-add-time-btn:disabled{
+  cursor:not-allowed;
+  opacity:.55;
+  background:#F2F5FA;
+  border-color:#D5DDEA;
+  color:#6F7C95;
+}
+.qr-auto-state{
+  display:inline-flex;
+  align-items:center;
+  height:26px;
+  border-radius:999px;
+  padding:0 10px;
+  font-size:11px;
+  font-weight:800;
+  border:1px solid #BFD6FF;
+  background:#EEF4FF;
+  color:#0A3A9A;
+}
+.qr-auto-state.is-off{
+  border-color:#FFD6CC;
+  background:#FFF2EE;
+  color:#A53B23;
+}
+.qr-countdown{
+  margin-top:2px;
+  font-size:12px;
+  color:#1B2A4A;
+  font-weight:700;
+}
+.qr-countdown.is-idle{
+  color:#6B778C;
+  font-weight:600;
+}
+.flex-timer-widget{
+  margin:0 0 10px;
+  padding:8px 10px;
+  border:1px solid #D8E6FF;
+  border-radius:12px;
+  background:linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+}
+.flex-timer-widget[hidden]{
+  display:none !important;
+}
+.flex-timer-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  margin-bottom:6px;
+}
+.flex-timer-title{
+  font-size:11px;
+  font-weight:800;
+  color:#0A3A9A;
+  letter-spacing:.3px;
+  text-transform:uppercase;
+}
+.flex-timer-value{
+  font-size:12px;
+  font-weight:800;
+  color:#1B2A4A;
+}
+/* HTML: <div class="loader"></div> */
+.loader{
+  width:100%;
+  height:12px;
+  border-radius:999px;
+  background:
+    linear-gradient(90deg, #F36C21 0%, #FDB913 100%) 0 / var(--timer-progress, 0%) no-repeat,
+    #DCEBFF;
+  transition:background-size .25s linear;
+}
+
 
 /* Accesibilidad: foco visible */
 .pay-card:focus-visible{
@@ -877,6 +985,15 @@
       cursor:pointer;
       white-space:normal;
       overflow-wrap:anywhere;
+    }
+    .trx-btn.trx-btn-cancel{
+      border-color:#FFD6CC;
+      background:#FFF2EE;
+      color:#A53B23;
+    }
+    .trx-btn.trx-btn-cancel:hover{
+      background:#FFE9E2;
+      border-color:#FFC2B2;
     }
     .trx-btn:disabled{
       opacity:.6;
@@ -1213,8 +1330,23 @@
         <label class="ops-check"><input type="checkbox" name="pm" value="PAGOEFECTIVO"><span>Pago Efectivo</span></label>
         <label class="ops-check"><input type="checkbox" name="pm" value="CUOTEALO"><span>Cuotealo</span></label>
         <label class="ops-check"><input type="checkbox" name="pm" value="BANK_TRANSFER"><span>Transferencia Bancaria</span></label>
-        </div>
       </div>
+
+      <div class="qr-cancel-controls">
+        <div class="ops-config-title">Control de temporizador FLEX</div>
+        <label class="ops-check qr-auto-toggle">
+          <input type="checkbox" id="qrAutoCancelToggle">
+          <span>Auto-cancelacion FLEX por temporizador</span>
+        </label>
+        <div class="qr-cancel-actions">
+          <button type="button" id="flexMinusTimeBtn" class="qr-add-time-btn">-30s</button>
+          <button type="button" id="flexAddTimeBtn" class="qr-add-time-btn">+30s</button>
+          <span id="qrAutoCancelStatus" class="qr-auto-state is-off">Desactivada</span>
+        </div>
+        <div id="flexCountdownStatus" class="qr-countdown is-idle">Contador: Sin temporizador activo</div>
+        <p class="secure-help">Si esta activo, al vencer el tiempo se ejecuta el DELETE automaticamente. Puedes ajustar tiempo con -30s o +30s.</p>
+      </div>
+    </div>
 
     <div id="secureCredentialsPanel" class="secure-panel" hidden>
       <div class="ops-config-title">Credenciales de pago seguro</div>
@@ -1297,6 +1429,13 @@
     <!-- Contenedor del formulario -->
     <section class="payment-wrap">
       <div class="payment-container">
+        <div id="flexTimerWidget" class="flex-timer-widget" hidden>
+          <div class="flex-timer-head">
+            <span class="flex-timer-title">Temporizador Flex</span>
+            <span id="flexTimerValue" class="flex-timer-value">00:00</span>
+          </div>
+          <div id="flexTimerLoader" class="loader" style="--timer-progress:0%"></div>
+        </div>
         <div id="loading" class="loading-text welcome">
           <span class="welcome-title">Bienvenido</span>
           <span class="welcome-sub">Prueba la pasarela en este demo.</span>
@@ -1312,6 +1451,13 @@
     <div class="modal-content">
       <span class="close" onclick="cerrarModal()">&times;</span>
       <h3 style="margin:4px 0 12px;color:#222">POP UP | FLEX</h3>
+      <div id="flexTimerWidgetModal" class="flex-timer-widget" hidden>
+        <div class="flex-timer-head">
+          <span class="flex-timer-title">Temporizador Flex</span>
+          <span id="flexTimerValueModal" class="flex-timer-value">00:00</span>
+        </div>
+        <div id="flexTimerLoaderModal" class="loader" style="--timer-progress:0%"></div>
+      </div>
       <div id="loadingModal" class="loading-text welcome">
         <span class="welcome-title">Bienvenido</span>
         <span class="welcome-sub">Prueba la pasarela en este demo.</span>
