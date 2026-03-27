@@ -1,11 +1,11 @@
 <!-- Generated from scripts/generate-readme.mjs -->
 
-# Flex Checkout Integration Playground
+# 💳 Flex Checkout Integration Playground
 
 Production-like payment integration demo that simulates the full checkout lifecycle across card, wallet, QR, and offline payment methods.
 Designed to replicate real-world payment integration scenarios and built with a focus on debugging and transaction observability.
 
-## Problem Statement
+## 🎯 Problem Statement
 
 Real payment integrations fail for operational reasons long before they fail at UI.
 Teams need a safe way to validate the entire transaction lifecycle: token creation, nonce acquisition, payload construction, checkout launch, response inspection, charge lookup, and edge cases such as QR expiration or cancellation.
@@ -13,7 +13,7 @@ Teams need a safe way to validate the entire transaction lifecycle: token creati
 In high-traffic systems, weak traceability and poor environment isolation slow down onboarding, QA, incident response, and merchant support.
 This project addresses that gap with a frontend integration sandbox that behaves like a production-minded checkout orchestration layer, not just a demo screen.
 
-## Solution Overview
+## 🧩 Solution Overview
 
 This project wraps `FlexPaymentForms` with a lightweight orchestration layer that:
 
@@ -26,22 +26,22 @@ This project wraps `FlexPaymentForms` with a lightweight orchestration layer tha
 
 It is intentionally built to simulate production-like payment flows while remaining easy to run as a static frontend demo.
 
-## Key Features
+## ✨ Key Features
 
-- Token + nonce bootstrap flow before checkout initialization
-- Payment orchestration across `CARD`, `YAPE`, `QR`, `PAGOEFECTIVO`, `CUOTEALO`, and `BANK_TRANSFER`
-- Controlled payload construction with a fresh `merchant_operation_number` on every run
-- Amount and currency handling for `PEN` and `USD`, mapped to numeric ISO values expected by the API
-- Billing profile injection plus `device_origin` enrichment for better request context
-- Checkout lifecycle available in 3 modes: embedded page, modal popup, and expanded layout
-- Post-transaction inspection of sent payload, gateway response, and `GET /charges/{merchant_code}/{order_id}/{transaction_id}` lookup
-- QR expiration monitoring with countdown, manual cancel, and optional timed auto-cancellation via `DELETE /charges/{merchant_code}/{order_id}`
-- Built with a focus on debugging and transaction observability through console traces, runtime state exposure, and DOM mutation watchers
-- Environment switching between `tst` and `prod`, including dynamic SDK JS/CSS loading
-- Demo-friendly credential workflows with guest mode and saved profiles in `localStorage`
-- Console helpers for faster diagnostics: `abrirFormularioNormal()`, `abrirModal()`, `abrirFormularioExpandido()`, `cerrarModal()`, `volverAlInicio()`, `forceQrCancellationNow()`, `setQrAutoCancellation()`, `getQrAutoCancellation()`, `printQrExpiration()`, `printQrCancellation()`, `vffDebugState()`
+- 🔐 Token + nonce bootstrap flow before checkout initialization
+- 🔀 Payment orchestration across `CARD`, `YAPE`, `QR`, `PAGOEFECTIVO`, `CUOTEALO`, and `BANK_TRANSFER`
+- 🧱 Controlled payload construction with a fresh `merchant_operation_number` on every run
+- 💱 Amount and currency handling for `PEN` and `USD`, mapped to numeric ISO values expected by the API
+- 📍 Billing profile injection plus `device_origin` enrichment for better request context
+- 🛒 Checkout lifecycle available in 3 modes: embedded page, modal popup, and expanded layout
+- 🔎 Post-transaction inspection of sent payload, gateway response, and `GET /charges/{merchant_code}/{order_id}/{transaction_id}` lookup
+- ⏱️ QR expiration monitoring with countdown, manual cancel, and optional timed auto-cancellation via `DELETE /charges/{merchant_code}/{order_id}`
+- 🧪 Built with a focus on debugging and transaction observability through console traces, runtime state exposure, and DOM mutation watchers
+- 🌐 Environment switching between `tst` and `prod`, including dynamic SDK JS/CSS loading
+- 🗂️ Demo-friendly credential workflows with guest mode and saved profiles in `localStorage`
+- 🛠️ Console helpers for faster diagnostics: `abrirFormularioNormal()`, `abrirModal()`, `abrirFormularioExpandido()`, `cerrarModal()`, `volverAlInicio()`, `forceQrCancellationNow()`, `setQrAutoCancellation()`, `getQrAutoCancellation()`, `printQrExpiration()`, `printQrCancellation()`, `vffDebugState()`
 
-## Architecture
+## 🏗️ Architecture
 
 The project keeps responsibilities separated so the checkout flow remains explainable and debuggable.
 
@@ -56,14 +56,14 @@ The project keeps responsibilities separated so the checkout flow remains explai
 | `QrCancellationController` | Detects QR selection, computes expiration, runs countdown, and triggers automatic or manual cancellation |
 | `Logger` + `NoticeService` + `Utils` | Support observability, safe serialization, UI notices, masked logging, and DOM snapshots |
 
-### Configured Environments
+### 🌍 Configured Environments
 
 | Environment | Auth Base URL | API Base URL | Cancel API Base URL |
 | --- | --- | --- | --- |
 | `tst` | `https://auth.preprod.alignet.io` | `https://api.dev.alignet.io` | `https://api.preprod.alignet.io` |
 | `prod` | `https://auth.alignet.io` | `https://api.alignet.io` | `https://api.alignet.io` |
 
-## Transaction Flow
+## 🔄 Transaction Flow
 
 1. The operator selects amount, currency, enabled payment methods, checkout mode, and optionally switches environment or credentials.
 2. `CheckoutApp` loads the correct Flex SDK assets for the active environment.
@@ -97,7 +97,7 @@ sequenceDiagram
     QR->>API: DELETE /charges/{merchant}/{order} on expiration or manual cancel
 ```
 
-## Real-World Use Cases
+## 🧠 Real-World Use Cases
 
 - Gateway onboarding demos for merchant integrations or solutions engineering
 - QA sandbox for validating payload shape, method enablement, and checkout behavior before backend rollout
@@ -105,7 +105,7 @@ sequenceDiagram
 - Portfolio artifact for fintech, ecommerce, PSP, and payment orchestration roles
 - Frontend reference implementation for teams planning a backend token broker or payment orchestration service
 
-## Production Readiness Signals
+## 🚦 Production Readiness Signals
 
 - Separation of concerns between orchestration, authentication, API integration, rendering, and QR lifecycle management
 - Explicit transaction traceability in both UI and console output
@@ -117,7 +117,7 @@ sequenceDiagram
 - Versioned API integration through the `ALG-API-VERSION` header
 - Simulates production-like payment flows without hiding operational complexity
 
-## Limitations
+## ⚠️ Limitations
 
 These constraints are intentional for a portfolio demo, but they are also the exact boundaries I would move first in a production system.
 
@@ -129,7 +129,7 @@ These constraints are intentional for a portfolio demo, but they are also the ex
 - Amount handling currently rounds values before sending them; a production payment system should use currency-aware precision or minor units
 - The user-facing QR expiration copy says "2 minutes" while the runtime timer is configured to 1 minuto(s), which highlights a real configuration drift risk worth fixing
 
-## Future Improvements
+## 🚀 Future Improvements
 
 - Move auth, token brokerage, and secret management to a backend service
 - Add correlation IDs and structured logs for better end-to-end traceability
@@ -140,7 +140,7 @@ These constraints are intentional for a portfolio demo, but they are also the ex
 - Add retry, timeout, and resilience policies around API integration
 - Publish a hosted demo with screenshots or GIFs for faster recruiter scanning
 
-## Portfolio Value / Why This Matters
+## 📌 Portfolio Value / Why This Matters
 
 This is not a UI-only sample.
 It shows how I think about payment orchestration, API integration, observability, checkout lifecycle control, and failure handling in systems that resemble real commerce flows.
@@ -149,7 +149,7 @@ For teams building gateways, PSPs, and high-traffic systems, the hard part is ra
 The hard part is making the transaction lifecycle inspectable, reproducible, and safe to operate.
 That is the engineering mindset this project is designed to demonstrate.
 
-## Run Locally
+## ▶️ Run Locally
 
 ```bash
 cd EJEMPLO_VFF_FLEX
